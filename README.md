@@ -2,6 +2,10 @@
 
 Research code associated with Saptarshi Majumdar's doctoral work on quantum spin chains coupled to local dissipative baths.
 
+![Stylized three-dimensional schematic of an XXZ chain: six blue spins joined by exchange bonds, each coupled to a separate coral bath of harmonic oscillators at zero temperature.](assets/dissipative-xxz-schematic.png)
+
+*Each spin couples to its own independent oscillator bath at zero temperature; α measures the spin–bath coupling strength. Teal Jxy bonds represent transverse exchange, Jxy(SxᵢSxᵢ₊₁ + SyᵢSyᵢ₊₁), while purple Jz bonds represent longitudinal exchange, Jz SzᵢSzᵢ₊₁. Their different heights distinguish the two terms acting on the same neighboring sites, rather than separate spatial paths. Spin directions and oscillator arrangements are illustrative and do not specify a phase. AI-generated illustration inspired by Figure 1 of [Majumdar et al., arXiv:2210.01590](https://arxiv.org/abs/2210.01590).*
+
 ## Research context
 
 We investigate the zero-temperature phase diagram of a one-dimensional XXZ spin chain in which each spin couples to an independent bath of harmonic oscillators: a many-body extension of the spin-boson model. Bosonization and a path-integral formulation map the quantum problem onto a classical field theory in one spatial dimension and imaginary time. Integrating out the baths produces a cosine interaction that is local in space and long-ranged along imaginary time.
