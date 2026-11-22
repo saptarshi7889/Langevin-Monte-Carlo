@@ -52,7 +52,7 @@ $$
 &=\frac{u}{\pi K}\left(\phi_{i+1,j}+\phi_{i-1,j}-2\phi_{ij}\right)\\
 &\quad+\frac{1}{\pi uK}\left(\phi_{i,j+1}+\phi_{i,j-1}-2\phi_{ij}\right)\\
 &\quad+\frac{\alpha}{\pi^2}\sum_{j'\ne j}D_\beta(|j-j'|)
-\sin\!\left[2(\phi_{ij'}-\phi_{ij})\right]+\eta_{ij}(t).
+\sin\left[2(\phi_{ij'}-\phi_{ij})\right]+\eta_{ij}(t).
 \end{aligned}
 $$
 
