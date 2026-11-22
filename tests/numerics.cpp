@@ -1,12 +1,18 @@
-#define main simulation_entry_point
-#ifdef COMMENSURATE
-#include "../src/commensurate/Langevin_simulation_initial_commensurate.cpp"
-#else
-#include "../src/incommensurate/Langevin_simulation_initial_simulation.cpp"
-#endif
-#undef main
+#include <langevin/incommensurate.hpp>
+#include <langevin/commensurate.hpp>
+
+using Eigen::MatrixXd;
+using std::vector;
+using langevin::detail::Diss;
+using langevin::detail::Diss_comm;
+using langevin::detail::Laplace_X;
+using langevin::detail::Laplace_T;
+using langevin::detail::RoughnessX;
+using langevin::detail::RoughnessT;
+constexpr double Pi = langevin::PI;
 
 #include <algorithm>
+#include <iostream>
 #include <stdexcept>
 
 namespace {
@@ -45,7 +51,7 @@ void test_kernel() {
     constexpr int EXTENT = 16;
     constexpr double HALF = 0.5;
     vector<double> coefficients(EXTENT - 1);
-    Kernel(coefficients.data(), EXTENT, TEST_ALPHA, 1.0);
+    langevin::kernel(coefficients.data(), EXTENT, TEST_ALPHA, 1.0);
     for (int r = 1; r < EXTENT; ++r) {
         double expected = 0;
         for (int image = -EXTENT / 2; image < EXTENT / 2; ++image) {
@@ -55,7 +61,7 @@ void test_kernel() {
         near(coefficients[r - 1], expected, TOLERANCE, "Ohmic kernel normalization or image range");
     }
     for (double exponent : {0.5, 1.5}) {
-        Kernel(coefficients.data(), EXTENT, TEST_ALPHA, exponent);
+        langevin::kernel(coefficients.data(), EXTENT, TEST_ALPHA, exponent);
         double beta_value = std::beta(1.0 - exponent / 2, exponent + 1);
         // Independent beta recurrence for positive integer distances.
         vector<double> beta_by_distance(EXTENT * EXTENT + EXTENT, 0);
@@ -72,7 +78,7 @@ void test_kernel() {
             require(coefficients[r - 1] > 0, "Kernel must be positive");
         }
     }
-    Kernel(coefficients.data(), EXTENT, 0, 0.5);
+    langevin::kernel(coefficients.data(), EXTENT, 0, 0.5);
     require(std::all_of(coefficients.begin(), coefficients.end(), [](double x) { return x == 0; }),
             "Zero bath coupling");
 }
@@ -149,9 +155,9 @@ void test_order_parameter_phase() {
     state.rough_tau.assign(ROWS - 1, 0);
 #ifdef COMMENSURATE
     state.commensurate = true;
-    near(langevin::measure(state), 0, TOLERANCE, "Commensurate measurements must preserve absolute phase");
+    near(langevin::detail::measure(state), 0, TOLERANCE, "Commensurate measurements must preserve absolute phase");
 #else
-    near(langevin::measure(state), 1, TOLERANCE, "Incommensurate observable uses mean-subtracted field");
+    near(langevin::detail::measure(state), 1, TOLERANCE, "Incommensurate observable uses mean-subtracted field");
 #endif
     require(state.phi == original, "Measurements must not shift the simulation field");
 #ifdef COMMENSURATE
@@ -178,7 +184,7 @@ void test_harmonic_equilibrium() {
     double sum = 0, squares = 0;
     int samples = 0;
     for (int step = 0; step < HARMONIC_STEPS; ++step) {
-        langevin::advance(state, coefficients, force);
+        langevin::detail::advance(state, coefficients, force);
         if (step >= HARMONIC_BURN_IN && step % HARMONIC_STRIDE == 0) {
             const double mode = (state.phi(0, 0) - state.phi(0, 1) + state.phi(1, 0) - state.phi(1, 1)) / 4;
             sum += mode;

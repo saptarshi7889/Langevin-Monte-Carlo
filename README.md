@@ -90,7 +90,14 @@ The [MIT license](LICENSE) covers this repository's code. [CITATION.cff](CITATIO
 src/
   incommensurate/  # Initial and continued finite-magnetization simulations
   commensurate/    # Initial and continued zero-magnetization simulations
-include/           # Shared kernel, command-line runner, checkpoints and measurements
+include/langevin/
+  incommensurate.hpp  # Header-only API: initial and continued incommensurate runs
+  commensurate.hpp    # Header-only API: initial and continued commensurate runs
+  simulation.hpp     # Shared state, integration, measurements and checkpoints
+  numerics.hpp       # Shared lattice and interaction functions
+  kernel.hpp         # Generalized dissipative kernel
+  cli.hpp            # Optional command-line adapter
+examples/          # Standalone C++ library usage
 tests/             # Numerical tests and executable-level restart tests
 scripts/           # Optional plotting utilities
 figures/           # Example kernel figure
@@ -102,6 +109,65 @@ figures/           # Example kernel figure
 | Commensurate | `build/initial-commensurate` | `build/continue-commensurate` | $\langle\cos(2\phi)\rangle$ |
 
 Initial runs start from $\phi=0$. Continuation restores a complete checkpoint, including the unshifted field, absolute step, parameters, accumulated measurements, random-generator state, and the Gaussian distribution's cached state. The original source filenames are preserved under their model directories, including the spelling `continuted` in the incommensurate continuation source.
+
+## Using the header-only C++ libraries
+
+The two related pairs of programs are available as **two C++17 header-only libraries**:
+
+- `#include <langevin/incommensurate.hpp>` provides `langevin::incommensurate::Simulation`.
+- `#include <langevin/commensurate.hpp>` provides `langevin::commensurate::Simulation`.
+
+Each `Simulation` supports both zero-field initialization and checkpoint continuation. You can include both model headers in one program and in multiple translation units. All library definitions are inline or templates; there is no compiled library to link, no global namespace import, and no dependency on the four executable source files. Add this repository's `include/` and your Eigen header directory to the compiler's include search path. The four CLI executables now use these same libraries.
+
+```cpp
+#include <langevin/incommensurate.hpp>
+#include <langevin/commensurate.hpp>
+
+int main()
+{
+    constexpr int INITIAL_FINAL_STEP = 2000;
+    constexpr int CONTINUED_FINAL_STEP = 4000;
+    constexpr double COMMENSURATE_G = 0.2;
+
+    langevin::Parameters parameters;
+    langevin::incommensurate::Simulation initial(parameters);
+    initial.advance_to(INITIAL_FINAL_STEP);
+    initial.save_checkpoint("checkpoint.txt");
+
+    auto continued =
+        langevin::incommensurate::Simulation::from_checkpoint("checkpoint.txt");
+    continued.advance_to(CONTINUED_FINAL_STEP);
+    const auto& field = continued.state().phi;
+
+    parameters.g = COMMENSURATE_G;
+    langevin::commensurate::Simulation commensurate(parameters);
+    if (const auto sample = commensurate.step()) {
+        // Use sample->step, sample->time and sample->order_parameter here.
+    }
+    return field.allFinite() ? 0 : 1;
+}
+```
+
+| API | Behavior |
+| --- | --- |
+| `Simulation(parameters)` | Validate parameters and create a zero-field initial simulation |
+| `Simulation::from_checkpoint(path)` | Restore the same model, parameters, counters, accumulated measurements and RNG state |
+| `step()` | Advance one step; return `std::optional<langevin::Measurement>` only when a measurement is scheduled |
+| `advance_to(final_step)` | Advance to an absolute step, automatically accumulating scheduled measurements; an equal target is a no-op and a backward target throws |
+| `state()` | Read-only `langevin::State`, including the field, parameters, absolute step, sample count and accumulated observable sums |
+| `coefficients()` | Read-only interaction coefficients, including $\alpha/\pi^2$ |
+| `save_checkpoint(path)` | Explicitly write or replace a complete checkpoint; the parent directory must already exist |
+
+Initialization and stepping perform no file output. File writes happen only when you request a checkpoint; the optional CLI adapter handles its own output tables. Invalid inputs and I/O failures throw standard C++ exceptions rather than terminating the host application. The field has `Beta` rows and `L` columns. Mean order and roughness are obtained by dividing the corresponding sums in `state()` by `state().samples`, after checking that the sample count is nonzero. Separate simulation objects own their state and random generators; copies reproduce the same trajectory, so use distinct seeds for independent runs.
+
+A [complete example](examples/library_usage.cpp) demonstrates both models and continuation:
+
+```bash
+make examples EIGEN_INCLUDE=/path/to/eigen3
+build/library-example /tmp/langevin-example-checkpoint.txt
+```
+
+To use the same example from another project, compile it with `-std=c++17 -I/path/to/Langevin-Monte-Carlo/include -I/path/to/eigen3`. No source files from `src/` need to be compiled into that project.
 
 ## Running a simulation
 
@@ -179,7 +245,7 @@ $$
 
 In the source matrices, rows label imaginary time and columns label space, the reverse of the paper's index convention used in the equations above. Spatial and imaginary-time Laplacians use periodic boundary conditions. The direct interaction evaluation costs $O(L\beta^2)$ per step; these programs do not use FFT acceleration.
 
-For even $\beta$, `Kernel()` stores
+For even $\beta$, `langevin::kernel()` stores
 
 $$
 \mathcal{K}_{\beta,s}(r)=\frac{\alpha}{\pi^2}
@@ -243,7 +309,7 @@ The Langevin equation is $d\phi_{ij}/dt=F^{\mathrm{comm}}_{ij}+\eta_{ij}$, with 
 
 ## Verification and migration from the original programs
 
-`make test` checks both models: the Ohmic kernel against its rational formula, generalized kernels against a beta-function recurrence, periodic Laplacians on Fourier modes, roughness on a rectangular lattice, interaction forces against finite-difference action derivatives, and a harmonic equilibrium variance benchmark. Executable-level tests compare split and uninterrupted runs, including checkpoint bytes and accumulated observables, and reject invalid inputs, changed restart parameters, wrong models, truncated checkpoints and output overwrites. Tests of a small lattice do not establish equilibration, time-step convergence or finite-size scaling for production parameters.
+`make test` checks the public libraries directly for both models: the Ohmic kernel against its rational formula, generalized kernels against a beta-function recurrence, periodic Laplacians on Fourier modes, roughness on a rectangular lattice, interaction forces against finite-difference action derivatives, and a harmonic equilibrium variance benchmark. Executable-level tests compare split and uninterrupted runs, including checkpoint bytes and accumulated observables, and reject invalid inputs, changed restart parameters, wrong models, truncated checkpoints and output overwrites. Additional API tests verify both headers together, multi-translation-unit linkage, zero-field initialization, measurement scheduling, model validation, and exact checkpoint continuation. Tests of a small lattice do not establish equilibration, time-step convergence or finite-size scaling for production parameters.
 
 GitHub Actions is configured to run the suite with GCC and Clang on pushes and pull requests. It installs Eigen only in the disposable CI runner. Production runs should additionally check time-step convergence, equilibration and autocorrelation for their chosen parameters.
 

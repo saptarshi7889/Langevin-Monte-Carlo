@@ -30,6 +30,10 @@ class SimulationTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout)
         return result
 
+    def test_public_headers_and_example(self):
+        self.run_program("test-headers", str(self.directory))
+        self.run_program("library-example", str(self.directory / "example-checkpoint.txt"))
+
     def test_exact_restart(self):
         for model in MODELS:
             with self.subTest(model=model):

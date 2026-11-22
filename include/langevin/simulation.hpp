@@ -1,18 +1,19 @@
 #pragma once
 
 #include "kernel.hpp"
+#include "numerics.hpp"
 #include <Eigen/Core>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
-#include <iostream>
 #include <limits>
-#include <map>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <optional>
+#include <utility>
 
 namespace langevin {
 inline constexpr int DEFAULT_SIZE = 16;
@@ -136,58 +137,7 @@ inline State load_checkpoint(const std::string& path, bool commensurate) {
     return state;
 }
 
-inline int integer(const std::string& text) {
-    std::size_t end = 0;
-    const int value = std::stoi(text, &end);
-    if (end != text.size()) throw std::invalid_argument("Invalid integer: " + text);
-    return value;
-}
-
-inline double real(const std::string& text) {
-    std::size_t end = 0;
-    const double value = std::stod(text, &end);
-    if (end != text.size() || !std::isfinite(value)) throw std::invalid_argument("Invalid number: " + text);
-    return value;
-}
-
-inline std::map<std::string, std::string> arguments(int argc, char** argv) {
-    std::map<std::string, std::string> result;
-    const std::string allowed = " L Beta u K alpha s g dt seed burn_in sample_every steps output checkpoint id ";
-    for (int index = 1; index < argc; ++index) {
-        const std::string arg(argv[index]);
-        const auto equals = arg.find('=');
-        if (equals == std::string::npos || equals == 0 || equals + 1 == arg.size())
-            throw std::invalid_argument("Arguments must be name=value; use --help");
-        const std::string name = arg.substr(0, equals);
-        if (allowed.find(" " + name + " ") == std::string::npos ||
-            !result.emplace(name, arg.substr(equals + 1)).second)
-            throw std::invalid_argument("Unknown or duplicate argument: " + name);
-    }
-    return result;
-}
-
-inline void apply_parameters(Parameters& p, const std::map<std::string, std::string>& args) {
-    for (const auto& entry : args) {
-        const auto& name = entry.first;
-        const auto& value = entry.second;
-        if (name == "L") p.L = integer(value);
-        else if (name == "Beta") p.Beta = integer(value);
-        else if (name == "burn_in") p.burn_in = integer(value);
-        else if (name == "sample_every") p.sample_every = integer(value);
-        else if (name == "seed") {
-            const int seed = integer(value);
-            if (seed < 0) throw std::invalid_argument("seed must be nonnegative");
-            p.seed = static_cast<unsigned>(seed);
-        }
-        else if (name == "u") p.u = real(value);
-        else if (name == "K") p.K = real(value);
-        else if (name == "alpha") p.alpha = real(value);
-        else if (name == "s") p.s = real(value);
-        else if (name == "g") p.g = real(value);
-        else if (name == "dt") p.dt = real(value);
-    }
-}
-
+namespace detail {
 template<class Force>
 inline void advance(State& state, const std::vector<double>& coefficients, Force force) {
     const auto& p = state.p;
@@ -217,82 +167,95 @@ inline double measure(State& state) {
     RoughnessX(observed, state.rough_x.data(), state.p.Beta, state.p.L);
     RoughnessT(observed, state.rough_tau.data(), state.p.Beta, state.p.L);
     double order = 0;
-    OrderParameter(observed, order, state.p.Beta, state.p.L);
+    OrderParameter(observed, order, state.p.Beta, state.p.L, state.commensurate);
     order /= static_cast<double>(state.p.L) * state.p.Beta;
     state.order_sum += order;
     ++state.samples;
     return order;
 }
 
-template<class Force>
-inline int run(int argc, char** argv, bool commensurate, bool continued, Force force) {
-    try {
-        if (argc == 2 && std::string(argv[1]) == "--help") {
-            std::cout << "Arguments (name=value): L Beta u K alpha s g dt seed burn_in sample_every steps output id checkpoint\n"
-                      << "steps is the FINAL absolute step, time = step*dt; burn_in and sample_every are step counts.\n"
-                      << "Initial defaults: L=16 Beta=16 u=1 K=1 alpha=1 s=0.5 g=0 dt=0.05 seed=1234\n"
-                      << "steps=2000 burn_in=1000 sample_every=20 id=0 output=run-0\n"
-                      << "Continuation requires checkpoint=PATH and restores all parameters and RNG state.\n";
-            return 0;
+template<bool Commensurate>
+struct Interaction {
+    void operator()(const Eigen::MatrixXd& phi, Eigen::MatrixXd& result,
+                    const std::vector<double>& coefficients, const Parameters& p) const {
+        if constexpr (Commensurate) {
+            Diss_comm(phi, result, coefficients.data(), p.Beta, p.L,
+                      LOCAL_FORCE_FACTOR * p.g / (PI * PI));
+        } else {
+            Diss(phi, result, coefficients.data(), p.Beta, p.L);
         }
-        const auto args = arguments(argc, argv);
-        if (continued != (args.count("checkpoint") != 0))
-            throw std::invalid_argument(continued ? "Continuation requires checkpoint=PATH" : "Use the continuation executable to load a checkpoint");
-        State state;
-        if (continued) state = load_checkpoint(args.at("checkpoint"), commensurate);
-        else state.commensurate = commensurate;
-        const auto original = parameter_key(state.p);
-        apply_parameters(state.p, args);
-        validate(state.p, commensurate);
-        if (continued && original != parameter_key(state.p))
-            throw std::invalid_argument("Cannot change physical, sampling or seed parameters of a checkpoint");
-        const int steps = args.count("steps") ? integer(args.at("steps")) : DEFAULT_STEPS;
-        const int id = args.count("id") ? integer(args.at("id")) : 0;
-        if (id < 0 || steps <= state.step) throw std::invalid_argument("Require id >= 0 and steps > checkpoint step (or zero for an initial run)");
-        if (!continued) {
-            state.phi = Eigen::MatrixXd::Zero(state.p.Beta, state.p.L);
-            state.rough_x.assign(state.p.L - 1, 0.0);
-            state.rough_tau.assign(state.p.Beta - 1, 0.0);
-            state.generator.seed(state.p.seed);
-        }
-        const std::filesystem::path output = args.count("output") ? args.at("output") : "run-" + std::to_string(id);
-        if (!std::filesystem::create_directories(output))
-            throw std::runtime_error("Output directory already exists; choose a new output=PATH");
-        std::vector<double> coefficients(state.p.Beta - 1);
-        Kernel(coefficients.data(), state.p.Beta, state.p.alpha, state.p.s);
-        auto kernel_file = output_file(output / "kernel.csv");
-        kernel_file << "separation,coefficient\n";
-        for (int r = 1; r < state.p.Beta; ++r) kernel_file << r << ',' << coefficients[r - 1] << '\n';
-        auto measurements = output_file(output / "measurements.csv");
-        measurements << "step,time,order_parameter\n";
-        while (state.step < steps) {
-            advance(state, coefficients, force);
-            if (state.step > state.p.burn_in && (state.step - state.p.burn_in) % state.p.sample_every == 0)
-                measurements << state.step << ',' << state.step * state.p.dt << ',' << measure(state) << '\n';
-        }
-        save_checkpoint(output / "checkpoint.txt", state);
-        auto configuration = output_file(output / "configuration.dat");
-        configuration << state.phi << '\n';
-        auto summary = output_file(output / "summary.txt");
-        summary << "model " << (commensurate ? "commensurate" : "incommensurate") << '\n'
-                << "id " << id << "\nstep " << state.step << "\ntime " << state.step * state.p.dt
-                << "\nsamples " << state.samples << '\n';
-        if (state.samples) {
-            summary << "order_parameter " << state.order_sum / state.samples << '\n';
-            auto roughness = output_file(output / "roughness.csv");
-            roughness << "axis,separation,mean_squared_difference\n";
-            for (int r = 1; r < state.p.L; ++r) roughness << "space," << r << ',' << state.rough_x[r - 1] / state.samples << '\n';
-            for (int r = 1; r < state.p.Beta; ++r) roughness << "imaginary_time," << r << ',' << state.rough_tau[r - 1] / state.samples << '\n';
-        } else summary << "order_parameter unavailable (no samples)\n";
-        kernel_file.close();
-        measurements.close();
-        configuration.close();
-        summary.close();
-        std::cout << "Saved " << state.samples << " cumulative samples at step " << state.step << " to " << output << '\n';
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << "Error: " << error.what() << '\n';
-        return 1;
     }
-}
+};
+} // namespace detail
+
+struct Measurement {
+    int step;
+    double time;
+    double order_parameter;
+};
+
+namespace detail {
+// The public model headers give each specialization a model-specific name.
+template<bool Commensurate>
+class Simulation {
+public:
+    explicit Simulation(const Parameters& parameters = Parameters{}) {
+        validate(parameters, Commensurate);
+        state_.p = parameters;
+        state_.commensurate = Commensurate;
+        state_.phi = Eigen::MatrixXd::Zero(parameters.Beta, parameters.L);
+        state_.rough_x.assign(parameters.L - 1, 0.0);
+        state_.rough_tau.assign(parameters.Beta - 1, 0.0);
+        state_.generator.seed(parameters.seed);
+        initialize_kernel();
+    }
+
+    static Simulation from_checkpoint(const std::filesystem::path& path) {
+        return Simulation(load_checkpoint(path.string(), Commensurate));
+    }
+
+    // State is read-only so callers cannot accidentally invalidate the kernel,
+    // sampling counters or reproducible random state.
+    const State& state() const noexcept { return state_; }
+    const std::vector<double>& coefficients() const noexcept { return coefficients_; }
+
+    // Advance exactly one step; return a measurement only at scheduled steps.
+    std::optional<Measurement> step() {
+        if (state_.step == std::numeric_limits<int>::max()) {
+            throw std::overflow_error("Langevin step counter exhausted");
+        }
+        advance(state_, coefficients_, Interaction<Commensurate>{});
+        const auto& p = state_.p;
+        if (state_.step > p.burn_in && (state_.step - p.burn_in) % p.sample_every == 0) {
+            const double order = measure(state_);
+            return Measurement{state_.step, state_.step * p.dt, order};
+        }
+        return std::nullopt;
+    }
+
+    // The target is an absolute step, not an additional number of steps.
+    // Equal targets are a no-op; running backward is an error.
+    void advance_to(int final_step) {
+        if (final_step < state_.step) {
+            throw std::invalid_argument("Cannot advance to a step earlier than the current state");
+        }
+        while (state_.step < final_step) step();
+    }
+
+    void save_checkpoint(const std::filesystem::path& path) const {
+        langevin::save_checkpoint(path, state_);
+    }
+
+private:
+    State state_;
+    std::vector<double> coefficients_;
+
+    explicit Simulation(State state) : state_(std::move(state)) { initialize_kernel(); }
+
+    void initialize_kernel() {
+        coefficients_.resize(state_.p.Beta - 1);
+        kernel(coefficients_.data(), state_.p.Beta, state_.p.alpha, state_.p.s);
+    }
+};
+} // namespace detail
 } // namespace langevin

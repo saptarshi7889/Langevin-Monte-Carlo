@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Expose two namespaced header-only libraries, `langevin/incommensurate.hpp` and
+  `langevin/commensurate.hpp`, each covering initial and continued simulations.
+- Share the lattice and interaction functions across the four CLI wrappers;
+  retain the CLI arguments, numerical results and version-1 checkpoint format.
+- Add a standalone C++ API example and tests of public-header use, model
+  coexistence, multiple translation units, and checkpoint continuation.
+
 - Group the initial and continued programs by incommensurate and commensurate models.
 - Add a C++17 Make build, numerical and restart regression tests, and GCC/Clang CI.
 - Replace hard-coded run parameters with a validated command-line interface.

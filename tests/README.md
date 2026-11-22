@@ -4,9 +4,12 @@ Run `make test EIGEN_INCLUDE=/path/to/eigen3` from the repository root. No test
 framework or Python packages are required; CLI tests use `unittest` and temporary
 output directories. `PYTHON=/path/to/python3` selects the test interpreter.
 
-The two C++ test executables exercise the model-specific functions from the
-initial-program sources. The CLI suite additionally executes both continuation
-programs.
+The numerical test executables include the public headers directly, without
+including or renaming any executable's `main`. The CLI suite executes all four
+thin command-line wrappers. A separate API executable links two translation units,
+includes both models together, and verifies initial runs and checkpoint
+continuation through the public classes. The standalone library example is also
+built and executed by the suite.
 
 - The Ohmic image sum is checked against its rational expression, including its
   prefactor and half-open cutoff; s=0.5 and s=1.5 are checked with an independent
@@ -27,6 +30,11 @@ programs.
   trajectories. The commensurate restart case includes nonzero g, and both cases
   use rectangular lattices. Invalid parameters, duplicate arguments, truncated or
   wrong-model checkpoints, changed restart physics, and output overwrites fail.
+- The public API is tested for zero-field initialization, kernel access, optional
+  scheduled measurements, read-only state access, exact checkpoint continuation,
+  rejection of backward integration and invalid parameters, and model separation.
+  Repeated header inclusion and multi-translation-unit linking check header-only
+  use without duplicate symbols.
 
 For address and undefined-behavior checks, use a separate build directory:
 
