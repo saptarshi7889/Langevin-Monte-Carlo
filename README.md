@@ -8,15 +8,12 @@ Each spin couples to its own independent oscillator bath at zero temperature; $\
 
 - **Teal — transverse exchange:**
 
-  \begin{eqaution}
-  J_{xy}\left(S_i^x S_{i+1}^x + S_i^y S_{i+1}^y\right).
-  \end{equation}
+  $J_{xy}\left(S_i^x S_{i+1}^x + S_i^y S_{i+1}^y\right)$.
+
 
 - **Purple — longitudinal exchange:**
 
-  $$
-  J_z S_i^z S_{i+1}^z.
-  $$
+  $J_z S_i^z S_{i+1}^z.$
 
 Their different heights distinguish the two terms acting on the same neighboring sites, rather than separate spatial paths. Spin directions and oscillator arrangements are illustrative and do not specify a phase. AI-generated illustration inspired by Figure 1 of [Majumdar et al., Physical Review B 107, 165113 (2023)](https://doi.org/10.1103/PhysRevB.107.165113).
 
