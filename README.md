@@ -8,9 +8,9 @@ Each spin couples to its own independent oscillator bath at zero temperature; $\
 
 - **Teal — transverse exchange:**
 
-  $$
+  \begin{eqaution}
   J_{xy}\left(S_i^x S_{i+1}^x + S_i^y S_{i+1}^y\right).
-  $$
+  \end{equation}
 
 - **Purple — longitudinal exchange:**
 
@@ -70,7 +70,7 @@ $$
 The published simulations use a **second-order stochastic Runge–Kutta algorithm for white noise**, following R. L. Honeycutt, [*Stochastic Runge-Kutta algorithms. I. White noise*, Physical Review A **45**, 600 (1992)](https://doi.org/10.1103/PhysRevA.45.600), reference **34** of the paper. The Langevin step is $\Delta t=0.05$: drift increments scale as $\Delta t$, while noise increments scale as $\sqrt{\Delta t}$. Equilibration times are benchmarked against the analytically solvable harmonic approximation,
 
 $$
-\sin\!\left[2(\phi_{ij'}-\phi_{ij})\right]
+\sin\left[2(\phi_{ij'}-\phi_{ij})\right]
 \longrightarrow 2(\phi_{ij'}-\phi_{ij}).
 $$
 
