@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add native CPython bindings, with separate incommensurate and commensurate
+  simulation modules, immutable parameters and measurements, and owned read-only
+  field snapshots compatible with NumPy. No binding-framework runtime is needed.
+- Preserve the same C++ stepping, observables and checkpoint format in Python;
+  test exact Python/CLI agreement and continuation in both directions.
+- Add Python source/wheel packaging, a no-install build target, and a dedicated
+  Python usage segment in the README.
+
 - Expose two namespaced header-only libraries, `langevin/incommensurate.hpp` and
   `langevin/commensurate.hpp`, each covering initial and continued simulations.
 - Share the lattice and interaction functions across the four CLI wrappers;

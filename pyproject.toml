@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langevin-monte-carlo-xxz"
+version = "0.1.0"
+description = "Native C++ Langevin sampling of dissipative commensurate and incommensurate XXZ chains"
+readme = "README.md"
+requires-python = ">=3.10"
+dynamic = ["license"]
+authors = [{name = "Saptarshi Majumdar"}]
+
+[project.urls]
+Repository = "https://github.com/saptarshi7889/Langevin-Monte-Carlo"
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+
+[tool.setuptools.packages.find]
+where = ["python"]

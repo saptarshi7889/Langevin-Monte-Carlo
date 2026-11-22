@@ -40,3 +40,10 @@ test: all $(BUILD)/test-incommensurate $(BUILD)/test-commensurate $(BUILD)/test-
 	$(BUILD)/test-incommensurate
 	$(BUILD)/test-commensurate
 	LANGEVIN_BUILD_DIR=$(BUILD) $(PYTHON) tests/test_cli.py
+
+.PHONY: python-bindings test-python
+python-bindings:
+	EIGEN_INCLUDE="$(EIGEN_INCLUDE)" $(PYTHON) setup.py build --build-base $(BUILD)/python-build --build-lib $(BUILD)/python
+
+test-python: all python-bindings
+	PYTHONPATH="$(abspath $(BUILD)/python)" LANGEVIN_BUILD_DIR=$(BUILD) $(PYTHON) -m unittest discover -s tests -p test_python.py

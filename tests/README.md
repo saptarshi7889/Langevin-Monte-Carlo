@@ -51,3 +51,15 @@ configured in CI but were not run locally.
 
 These checks do not reproduce the published phase diagrams or establish
 production equilibration, finite-size scaling, or time-step convergence.
+
+## Python interface
+
+`make test-python PYTHON=/path/to/python EIGEN_INCLUDE=/path/to/eigen3` builds the
+native CPython extension under `build/python` without installing anything. It
+requires the selected interpreter's development headers and an existing
+setuptools installation. The Python regressions check both models against the CLI
+byte-for-byte, resume checkpoints in both directions, validate parameters and
+exceptions, verify snapshot lifetime/read-only buffers and sampling timing, and
+exercise independent threaded simulations. NumPy interoperability is tested when
+NumPy is present, otherwise that one test is skipped. CPython 3.14 was tested
+locally both with and without NumPy. No Python packages were installed locally.

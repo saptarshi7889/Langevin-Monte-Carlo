@@ -97,7 +97,8 @@ include/langevin/
   numerics.hpp       # Shared lattice and interaction functions
   kernel.hpp         # Generalized dissipative kernel
   cli.hpp            # Optional command-line adapter
-examples/          # Standalone C++ library usage
+python/            # Native CPython bindings and model-specific Python modules
+examples/          # Standalone C++ and Python library usage
 tests/             # Numerical tests and executable-level restart tests
 scripts/           # Optional plotting utilities
 figures/           # Example kernel figure
@@ -168,6 +169,118 @@ build/library-example /tmp/langevin-example-checkpoint.txt
 ```
 
 To use the same example from another project, compile it with `-std=c++17 -I/path/to/Langevin-Monte-Carlo/include -I/path/to/eigen3`. No source files from `src/` need to be compiled into that project.
+
+## For Python users
+
+The Python package is `langevin_monte_carlo` (distribution name: `langevin-monte-carlo-xxz`). It calls the same C++ header libraries through a native CPython extension; simulation loops are not reimplemented in Python. Use `incommensurate.Simulation` for finite, incommensurate magnetization and `commensurate.Simulation` for the zero-magnetization model with the two additional forces described below. Both classes support initial runs and checkpoint continuation.
+
+### Build or install in your project environment
+
+Requirements are **CPython 3.10 or later**, its development headers, a C++17 compiler, Eigen, setuptools 64 or later, and wheel for building. The core Python API needs no NumPy, pybind11, or other binding-framework runtime. NumPy and Matplotlib are useful for analysis and plotting. The provided [Conda environment](environment.yml) includes the compiler, Eigen, Python, packaging tools and plotting packages. Linux is tested locally; macOS is supported by the build configuration but has not been tested here. Windows/MSVC and free-threaded Python have not been validated. Native binaries must be built for the Python interpreter and platform that will load them.
+
+After reviewing the environment specification, create and activate a dedicated environment if you do not already have one:
+
+```bash
+conda env create -f environment.yml
+conda activate langevin-monte-carlo
+export EIGEN_INCLUDE="$CONDA_PREFIX/include/eigen3"
+```
+
+Creating the environment installs packages. These commands are instructions for your own setup; no environment or dependency has been installed automatically. To install from this repository into that environment:
+
+```bash
+python -m pip install --no-build-isolation --no-deps .
+```
+
+This uses the existing environment's build tools and avoids downloading build dependencies. It is a local source installation, not a download from PyPI; this project has not been published there. There is no need to build the CLI executables for ordinary Python use.
+
+Alternatively, **build and use Python bindings without installing a package**:
+
+```bash
+make python-bindings PYTHON=python EIGEN_INCLUDE="$EIGEN_INCLUDE"
+PYTHONPATH="$PWD/build/python" python examples/python_usage.py
+```
+
+Choose `PYTHON` from the intended environment; its matching development headers must be available. The build writes only into this checkout. For Jupyter, use a kernel from the same environment and, if using the uninstalled build, add the absolute `build/python` directory to `sys.path` before importing. Restart the kernel after rebuilding an already imported native extension.
+
+### Initialize, sample and continue
+
+```python
+from dataclasses import replace
+from pathlib import Path
+from langevin_monte_carlo import Parameters, commensurate, incommensurate
+
+INITIAL_FINAL_STEP = 2000
+CONTINUED_FINAL_STEP = 4000
+COMMENSURATE_G = 0.2
+CHECKPOINT = Path("python-checkpoint.txt")
+
+parameters = Parameters(
+    L=16, Beta=16, K=1.0, u=1.0, alpha=1.0, s=0.5,
+    dt=0.05, burn_in=1000, sample_every=20, seed=73,
+)
+simulation = incommensurate.Simulation(parameters)  # Zero field at t=0.
+simulation.advance_to(INITIAL_FINAL_STEP)
+state = simulation.state
+print(state.time, state.samples, state.mean_order_parameter)
+
+simulation.save_checkpoint(CHECKPOINT)
+continued = incommensurate.Simulation.from_checkpoint(CHECKPOINT)
+continued.advance_to(CONTINUED_FINAL_STEP)
+
+# Parameters are immutable: replace selected values for a new simulation.
+afm = commensurate.Simulation(replace(parameters, g=COMMENSURATE_G, seed=74))
+observations = []
+while afm.current_step < INITIAL_FINAL_STEP:
+    observation = afm.step()
+    if observation is not None:
+        observations.append(observation)
+```
+
+`advance_to(n)` targets the **absolute step** $n$, not an additional duration; $t=n\Delta t$. It accumulates scheduled measurements but does not return their individual rows. Use `step()` when you want a time series: it returns a frozen `Measurement(step, time, order_parameter)` on scheduled steps and `None` otherwise. Defaults, parameter ranges, burn-in, measurement intervals and the physical meaning of `g` are the same as in the C++/CLI descriptions. `Parameters` and `Measurement` are frozen dataclasses; `dataclasses.replace` creates altered parameters for a new run.
+
+Checkpoints are **interchangeable between Python and the C++ executables** for the same model and numerical environment. They restore the field, sampling schedule, observable sums and RNG state; there is no parameters argument to `from_checkpoint` that could silently change the saved physics. The original pre-package matrices and filename-based restart files remain unsupported. Checkpoint writes explicitly replace their target; choose a new filename if you want to preserve an older checkpoint. Initialization and stepping otherwise do not write files.
+
+### NumPy arrays and plotting
+
+`simulation.state` returns an **owned, read-only snapshot**, rather than live mutable C++ memory. The field is a native-double `memoryview` with shape `(Beta, L)`: axis 0 is imaginary time and axis 1 is space. Without NumPy, use `state.phi[time_index, space_index]` or `state.phi.tolist()`. With NumPy:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+FIGURE_SIZE = (7, 4)
+state = continued.state
+field = np.asarray(state.phi)       # Read-only view of the snapshot.
+editable_field = field.copy()      # Editing this never changes the simulation.
+kernel = np.asarray(continued.coefficients)
+
+fig, ax = plt.subplots(figsize=FIGURE_SIZE)
+image = ax.imshow(field, aspect="auto", origin="lower")
+ax.set_xlabel("Spatial site")
+ax.set_ylabel("Imaginary-time site")
+fig.colorbar(image, ax=ax, label=r"$\phi$")
+fig.tight_layout()
+plt.show()
+```
+
+A snapshot remains valid after advancing or deleting its simulation. Each `state` access copies the field and accumulated roughness arrays; use `simulation.current_step`, `simulation.samples` and `simulation.time` to check progress without copying the field. `simulation.coefficients` is a separate read-only snapshot of the kernel, including $\alpha/\pi^2$.
+
+`state.order_sum`, `state.rough_x` and `state.rough_tau` are **cumulative sums**, not averages. `state.mean_order_parameter` is `None` before the first measurement. After checking `state.samples > 0`, obtain mean roughness as `np.asarray(state.rough_x) / state.samples` and `np.asarray(state.rough_tau) / state.samples`. The incommensurate order parameter uses the mean-subtracted field; the commensurate order parameter preserves the absolute phase, matching the C++ libraries.
+
+### Errors, parallelism and verification
+
+Invalid physical parameters raise `ValueError`; invalid Python argument types raise `TypeError`; integers outside the C++ size/step/seed range raise `OverflowError`. Invalid, missing or incompatible checkpoints and native file-operation failures raise `RuntimeError`. These errors propagate as Python exceptions rather than terminating the interpreter.
+
+Long C++ advances release the Python GIL. Independent simulation objects may run in separate threads; give them distinct seeds for independent trajectories. Concurrent access to the **same** simulation raises `RuntimeError` while that object is busy. For process-based parallelism, construct the simulation inside each worker; native simulation handles are not picklable. Do not use the same checkpoint path from multiple workers. Statistical uncertainty still requires accounting for autocorrelation.
+
+Run the Python suite with:
+
+```bash
+make test-python PYTHON=python EIGEN_INCLUDE="$EIGEN_INCLUDE"
+```
+
+It builds the extension and CLI binaries without installing them, then checks Python/CLI agreement, exact continuation in both directions, measurement timing, input errors, snapshot ownership, independent threaded trajectories, and NumPy conversion when NumPy is available. The Python API has been tested locally with CPython 3.14; GitHub CI is configured to test it separately from the C++ suite. A [complete Python example](examples/python_usage.py) runs with the standard library alone.
 
 ## Running a simulation
 
