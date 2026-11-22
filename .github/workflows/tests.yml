@@ -1,0 +1,26 @@
+name: Tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - compiler: g++
+            flags: -O2
+          - compiler: clang++
+            flags: -O2
+          - compiler: g++
+            flags: -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Eigen in the disposable CI runner
+        run: sudo apt-get update && sudo apt-get install -y libeigen3-dev
+      - name: Build and test
+        env:
+          CXXFLAGS: ${{ matrix.flags }}
+        run: make -j2 test CXX=${{ matrix.compiler }}

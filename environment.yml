@@ -1,0 +1,10 @@
+name: langevin-monte-carlo
+channels:
+  - conda-forge
+dependencies:
+  - cxx-compiler
+  - make
+  - eigen>=3.3
+  - python>=3.10
+  - numpy
+  - matplotlib

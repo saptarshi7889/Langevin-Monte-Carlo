@@ -71,9 +71,169 @@ $$
 \longrightarrow 2(\phi_{ij'}-\phi_{ij}).
 $$
 
-## Current programs
+## Build and test
 
-All four programs implement the nonlinear dissipative sine force, periodic spatial and imaginary-time Laplacians, and a two-stage stochastic predictor–corrector update. The same matrix of independent standard Gaussian values $\xi$ is reused in both stages:
+The simulation package requires a C++17 compiler, Make, and Eigen headers (Eigen 3.3 or later). The CLI regression tests use Python 3's standard library; NumPy and Matplotlib are only needed for the optional plotting script. MPI is not required. No dependencies are downloaded by the Makefile.
+
+```bash
+make -j2 EIGEN_INCLUDE=/path/to/eigen3
+make test EIGEN_INCLUDE=/path/to/eigen3
+```
+
+`EIGEN_INCLUDE` must contain `Eigen/`; it defaults to `/usr/include/eigen3`. An optional [project Conda environment](environment.yml) specifies the build, test, and plotting dependencies. Creating that environment installs packages; review it before running `conda env create -f environment.yml`. After activation, build with `make EIGEN_INCLUDE="$CONDA_PREFIX/include/eigen3"`.
+
+The [MIT license](LICENSE) covers this repository's code. [CITATION.cff](CITATION.cff) identifies the software; please also cite the relevant papers below. This package supports reproducible small examples and numerical tests, but does not contain a full reproduction of all published phase diagrams.
+
+## Package layout
+
+```text
+src/
+  incommensurate/  # Initial and continued finite-magnetization simulations
+  commensurate/    # Initial and continued zero-magnetization simulations
+include/langevin/
+  incommensurate.hpp  # Header-only API: initial and continued incommensurate runs
+  commensurate.hpp    # Header-only API: initial and continued commensurate runs
+  simulation.hpp     # Shared state, integration, measurements and checkpoints
+  numerics.hpp       # Shared lattice and interaction functions
+  kernel.hpp         # Generalized dissipative kernel
+  cli.hpp            # Optional command-line adapter
+examples/          # Standalone C++ library usage
+tests/             # Numerical tests and executable-level restart tests
+scripts/           # Optional plotting utilities
+figures/           # Example kernel figure
+```
+
+| Model | Initial executable | Continuation executable | Order parameter |
+| --- | --- | --- | --- |
+| Incommensurate | `build/initial-incommensurate` | `build/continue-incommensurate` | $\langle\cos(\phi-\overline\phi)\rangle$ |
+| Commensurate | `build/initial-commensurate` | `build/continue-commensurate` | $\langle\cos(2\phi)\rangle$ |
+
+Initial runs start from $\phi=0$. Continuation restores a complete checkpoint, including the unshifted field, absolute step, parameters, accumulated measurements, random-generator state, and the Gaussian distribution's cached state. The original source filenames are preserved under their model directories, including the spelling `continuted` in the incommensurate continuation source.
+
+## Using the header-only C++ libraries
+
+The two related pairs of programs are available as **two C++17 header-only libraries**:
+
+- `#include <langevin/incommensurate.hpp>` provides `langevin::incommensurate::Simulation`.
+- `#include <langevin/commensurate.hpp>` provides `langevin::commensurate::Simulation`.
+
+Each `Simulation` supports both zero-field initialization and checkpoint continuation. You can include both model headers in one program and in multiple translation units. All library definitions are inline or templates; there is no compiled library to link, no global namespace import, and no dependency on the four executable source files. Add this repository's `include/` and your Eigen header directory to the compiler's include search path. The four CLI executables now use these same libraries.
+
+```cpp
+#include <langevin/incommensurate.hpp>
+#include <langevin/commensurate.hpp>
+
+int main()
+{
+    constexpr int INITIAL_FINAL_STEP = 2000;
+    constexpr int CONTINUED_FINAL_STEP = 4000;
+    constexpr double COMMENSURATE_G = 0.2;
+
+    langevin::Parameters parameters;
+    langevin::incommensurate::Simulation initial(parameters);
+    initial.advance_to(INITIAL_FINAL_STEP);
+    initial.save_checkpoint("checkpoint.txt");
+
+    auto continued =
+        langevin::incommensurate::Simulation::from_checkpoint("checkpoint.txt");
+    continued.advance_to(CONTINUED_FINAL_STEP);
+    const auto& field = continued.state().phi;
+
+    parameters.g = COMMENSURATE_G;
+    langevin::commensurate::Simulation commensurate(parameters);
+    if (const auto sample = commensurate.step()) {
+        // Use sample->step, sample->time and sample->order_parameter here.
+    }
+    return field.allFinite() ? 0 : 1;
+}
+```
+
+| API | Behavior |
+| --- | --- |
+| `Simulation(parameters)` | Validate parameters and create a zero-field initial simulation |
+| `Simulation::from_checkpoint(path)` | Restore the same model, parameters, counters, accumulated measurements and RNG state |
+| `step()` | Advance one step; return `std::optional<langevin::Measurement>` only when a measurement is scheduled |
+| `advance_to(final_step)` | Advance to an absolute step, automatically accumulating scheduled measurements; an equal target is a no-op and a backward target throws |
+| `state()` | Read-only `langevin::State`, including the field, parameters, absolute step, sample count and accumulated observable sums |
+| `coefficients()` | Read-only interaction coefficients, including $\alpha/\pi^2$ |
+| `save_checkpoint(path)` | Explicitly write or replace a complete checkpoint; the parent directory must already exist |
+
+Initialization and stepping perform no file output. File writes happen only when you request a checkpoint; the optional CLI adapter handles its own output tables. Invalid inputs and I/O failures throw standard C++ exceptions rather than terminating the host application. The field has `Beta` rows and `L` columns. Mean order and roughness are obtained by dividing the corresponding sums in `state()` by `state().samples`, after checking that the sample count is nonzero. Separate simulation objects own their state and random generators; copies reproduce the same trajectory, so use distinct seeds for independent runs.
+
+A [complete example](examples/library_usage.cpp) demonstrates both models and continuation:
+
+```bash
+make examples EIGEN_INCLUDE=/path/to/eigen3
+build/library-example /tmp/langevin-example-checkpoint.txt
+```
+
+To use the same example from another project, compile it with `-std=c++17 -I/path/to/Langevin-Monte-Carlo/include -I/path/to/eigen3`. No source files from `src/` need to be compiled into that project.
+
+## Running a simulation
+
+Arguments use `name=value`; `--help` lists the interface. The defaults are deliberately small examples, rather than the production lattice sizes and durations used in the papers.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `L`, `Beta` | `16`, `16` | Space and imaginary-time extents; `L >= 2`, even `Beta >= 2` |
+| `u`, `K` | `1`, `1` | Positive Luttinger velocity and parameter |
+| `alpha`, `s` | `1`, `0.5` | Nonnegative bath coupling and exponent $0<s<2$ |
+| `g` | `0` | Nonnegative commensurate action coupling; must be zero in the incommensurate model |
+| `dt` | `0.05` | Positive Langevin time step |
+| `steps` | `2000` | Final **absolute step**, also for continuation; $t=\text{step}\times\Delta t$ |
+| `burn_in` | `1000` | Initial steps excluded from measurements |
+| `sample_every` | `20` | Step interval between measurements after burn-in |
+| `seed` | `1234` | Explicit nonnegative integer seed; use a different seed for each independent trajectory |
+| `id` | `0` | Run label; selects `run-ID` when `output` is omitted, but does not change the seed |
+| `output` | `run-0` | New output directory; an existing directory is never overwritten |
+| `checkpoint` | none | Required input path for continuation executables |
+
+The first measurement is at `burn_in + sample_every`. All scheduling uses integer steps, avoiding floating-point time-loop drift. At zero samples, the summary reports that the order parameter is unavailable; no roughness averages are written.
+
+```bash
+build/initial-incommensurate L=16 Beta=16 s=0.5 alpha=1 \
+  steps=2000 burn_in=1000 sample_every=20 seed=73 output=runs/inc-73
+
+build/continue-incommensurate checkpoint=runs/inc-73/checkpoint.txt \
+  steps=4000 output=runs/inc-73-continued
+
+build/initial-commensurate L=16 Beta=16 s=0.5 alpha=1 g=0.2 \
+  steps=2000 burn_in=1000 sample_every=20 seed=74 output=runs/comm-74
+
+build/continue-commensurate checkpoint=runs/comm-74/checkpoint.txt \
+  steps=4000 output=runs/comm-74-continued
+```
+
+Continuation rejects changes to the saved physical parameters, seed, and sampling schedule, as well as checkpoints for the wrong model. `steps` must exceed the saved step. Split and uninterrupted trajectories agree exactly with the same executable and floating-point environment; cross-platform random-number or bitwise reproducibility is not promised. The final checkpoint is written after a successful run; periodic crash-recovery checkpoints are not implemented.
+
+### Output files
+
+| File | Contents |
+| --- | --- |
+| `checkpoint.txt` | Versioned complete restart state, parameters and cumulative measurement sums |
+| `configuration.dat` | Final **unshifted** field, with `Beta` rows and `L` columns |
+| `summary.txt` | Model, run label, final step/time, cumulative sample count and mean order parameter |
+| `measurements.csv` | Step, time and order parameter for samples generated in this invocation |
+| `roughness.csv` | Cumulative mean-squared field differences, separately for space and imaginary time |
+| `kernel.csv` | Stored interaction coefficients, including $\alpha/\pi^2$ |
+
+Continuation keeps cumulative statistics from the checkpoint but writes only its new measurement rows. Concatenate measurement tables with one header if a complete time series is needed. Both models now initialize, update, save and restore roughness accumulators, including on rectangular lattices. Incommensurate observables use the mean-subtracted field; commensurate observables keep the absolute field phase because arbitrary uniform shifts are not a symmetry of that action. Neither model shifts its saved field.
+
+### Independent trajectories in parallel
+
+Each executable is serial. Parallelize independent trajectories with distinct seeds and output directories; `id` alone does not make trajectories independent. For example:
+
+```bash
+build/initial-commensurate seed=1001 id=0 output=runs/comm-1001 &
+build/initial-commensurate seed=1002 id=1 output=runs/comm-1002 &
+wait
+```
+
+Use one process per trajectory in a job array on a cluster. The programs do not read MPI ranks, distribute a lattice, or aggregate trajectories. Do not use identical arguments under `mpirun`: identical seeds would duplicate trajectories, and identical output paths would conflict. Estimate uncertainty using independent trajectories or time-series methods that account for autocorrelation; increasing the number of saved samples alone does not establish independence.
+
+## Discretization and kernel
+
+All four programs retain the two-stage additive-noise stochastic predictor–corrector update. A single matrix of independent standard Gaussian values $\xi$ is reused in both stages:
 
 $$
 \begin{aligned}
@@ -83,56 +243,28 @@ $$
 \end{aligned}
 $$
 
-Here $F$ is the deterministic drift. This replaces the Euler update described for the earlier source. In the C++ matrices, rows label imaginary time and columns label space, the reverse of the paper's index convention above. Parameters other than the run identifier and continuation input folder are edited directly in `main` and require recompilation.
+In the source matrices, rows label imaginary time and columns label space, the reverse of the paper's index convention used in the equations above. Spatial and imaginary-time Laplacians use periodic boundary conditions. The direct interaction evaluation costs $O(L\beta^2)$ per step; these programs do not use FFT acceleration.
 
-| Program | Role | Current defaults |
-| --- | --- | --- |
-| [`Langevin_simulation_initial_simulation.cpp`](Langevin_simulation_initial_simulation.cpp) | Starts at $t=0$ with every field value zero. | $u=1$, $K=1$, $s=1.5$, $\alpha=1$, $L=\beta=16$, $\Delta t=0.05$, $t_{\mathrm{fin}}=16$ |
-| [`Langevin_simulation_continuted_simulation.cpp`](Langevin_simulation_continuted_simulation.cpp) | Loads a previously saved field, order-parameter average, and sample count, then continues sampling. The filename retains the spelling `continuted`. | $u=1$, $K=1$, $s=0.5$, $\alpha=5$, $L=\beta=256$, $\Delta t=0.05$, $t_{\mathrm{init}}=0$, $t_{\mathrm{fin}}=102400$ |
-
-The two programs above describe the **incommensurate** case. The **commensurate, zero-magnetization** case is implemented by the following pair:
-
-| Program | Role | Current defaults |
-| --- | --- | --- |
-| [`Langevin_simulation_initial_commensurate.cpp`](Langevin_simulation_initial_commensurate.cpp) | Starts from a flat, zero field at $t=0$. | $u=K=1$, $s=0.5$, $\alpha=1$, $g_{\mathrm{code}}=0$, $L=\beta=320$, $\Delta t=0.05$, $t_{\mathrm{fin}}=128000$ |
-| [`Langevin_simulation_continued_commensurate.cpp`](Langevin_simulation_continued_commensurate.cpp) | Loads a commensurate configuration, order-parameter average, and sample count, then continues sampling. | Same physical parameters and lattice; $t_{\mathrm{init}}=0$, $t_{\mathrm{fin}}=128000$, $\Delta t=0.05$ |
-
-### Kernel implemented in all four programs
-
-The Ohmic formula in the published-method section describes Appendix C of the Ohmic paper. The current `Kernel(b, R, a, c)` functions instead use the Euler beta function, with $R=\beta$, $a=\alpha$, and $c=s$. For the even lattice sizes used here, the array stores
+For even $\beta$, `langevin::kernel()` stores
 
 $$
 \mathcal{K}_{\beta,s}(r)=\frac{\alpha}{\pi^2}
 \sum_{k=-\beta/2}^{\beta/2-1}
-\mathrm{B}\left(r+k\beta-\frac{s}{2},\,s+1\right),
-\qquad r=1,\ldots,\beta-1.
+\mathrm{B}\left(|r+k\beta|-\frac{s}{2},s+1\right),
+\qquad r=1,\ldots,\beta-1,
 $$
 
-Here $\mathrm{B}(x,y)$ denotes the beta special function called as `beta(x,y)` in C++; it is distinct from the imaginary-time extent $\beta$. The implementation evaluates the signed argument $r+k\beta-s/2$ exactly as written, without an absolute value. Negative first arguments occur in the image sum, so their numerical evaluation should be checked when changing compiler or standard-library implementation. No independent validation of this generalized kernel has been performed here.
+where $\mathrm B$ is the Euler beta special function, distinct from the extent $\beta$. For integer $n\ne0$ and $0<s<2$, the analytic continuation of $\mathrm B(n-s/2,s+1)$ is even in $n$. The implementation now reflects negative integer images before evaluating the function, then uses log-gamma values with positive arguments. This avoids relying on standard-library behavior for negative beta-function arguments. The restriction $0<s<2$ ensures that the reflected arguments are positive; larger exponents are not supported by this package.
 
-`Diss()` multiplies these stored coefficients directly by $\sin[2(\phi_{ij'}-\phi_{ij})]$ and sums over other imaginary-time sites at the same spatial site. Thus the stored kernel **already includes** $\alpha/\pi^2$; do not apply that prefactor again. The equal-time term is excluded. The Ohmic beta-function identity
+The original half-open image range is retained. This finite image truncation approximates a periodic image sum, with a small reflection error; no exact finite-temperature kernel is claimed. The stored coefficients already contain $\alpha/\pi^2$. The equal-time term is excluded. For $s=1$,
 
 $$
-\mathrm{B}\left(x-\tfrac12,2\right)=\frac{1}{x^2-\tfrac14}
+\mathrm{B}\left(n-\tfrac12,2\right)=\frac{1}{n^2-\tfrac14},
 $$
 
-relates the $s=1$ expression to the earlier Ohmic kernel. Unlike the printed Appendix C sum, the code excludes the upper image endpoint $k=\beta/2$. The existing [kernel plot at $\beta=256$](figures/dissipative-kernel-beta256.png) and [plotting script](scripts/plot_dissipative_kernel.py) illustrate the printed Ohmic Appendix C formula, without $\alpha/\pi^2$; they do not plot the generalized beta-function kernel above.
+recovering the discretized Ohmic kernel. The [existing $\beta=256$ figure](figures/dissipative-kernel-beta256.png) and [plotting script](scripts/plot_dissipative_kernel.py) show the **printed Appendix C** Ohmic sum, which includes the upper image endpoint and omits $\alpha/\pi^2$; they are distinct from `kernel.csv`.
 
-### Incommensurate initial runs and saved observables
-
-The initial program accepts `id=N` (default `0`). Output filenames use `N+1`, including `coreN+1` in configuration filenames. At each measurement, it subtracts the field's spatial–imaginary-time mean to obtain $\phi^\star$, saves that centered configuration, and accumulates spatial and imaginary-time roughness and the order parameter $\langle\cos\phi^\star\rangle$. It also writes a time log, running averages, a sample count, and a kernel file. Configuration files are plain whitespace-separated matrices with `Beta` rows and `L` columns.
-
-**Before generating continuation input, increase the initial run duration:** measurements start at `t_eq1 = 4*t_eq2 = 64`, while the current `t_fin` is only `16`. These defaults therefore produce no saved configurations or measured observables. Measurements are scheduled every `int(t_eq2/delta_t)` steps, with `t_eq2 = 16`. Keep $L=\beta$ with the present roughness-array initialization and output loops.
-
-### Continuing an incommensurate run
-
-The continuation program accepts `id=N` and `folder=/path/to/input/`. Include the trailing `/`: the code concatenates the folder and filenames directly. It reads the order-parameter file (second value on its data line), sample-count file, and configuration whose index equals that saved count. It reconstructs the accumulated order parameter from its previous average and count, then adds subsequent measurements. It does not restore the random-generator state, so this is a statistical continuation rather than a bit-for-bit restart.
-
-Match the input's $L$, `Beta`, $K$, $s$, $\alpha$, time step, and run identifier. The supplied initial and continuation defaults **do not match**. Input filenames are constructed using `t_fin_prev`, currently assigned from the continuation's `t_fin`; set `t_fin_prev` to the duration tag in the existing filenames when extending to a different final time. The input configuration index comes from the saved count, not from `t_init` or a time log. Set `t_init` explicitly to the intended starting Langevin time; its current value is `0`. Changing it alone does not select a different input configuration.
-
-Continuation measures every `int(t_eq/delta_t)` steps, with `t_eq = 256` and the condition `t > 0`. It evaluates the order parameter on the centered field, but saves the uncentered `Phi`. **Continuation roughness output is currently invalid:** loading, restoring, and updating `B_X` and `B_T` are commented out, but those uninitialized arrays are still written to a roughness file. Do not use that output for analysis. Existing order-parameter and sample-count files are replaced with updated totals; the time log is opened afresh.
-
-### Commensurate action and the two additional forces
+## Commensurate action and the two additional forces
 
 Equation (12) and the discussion immediately following it in [*Antiferromagnetic order enhanced by local dissipation*, Physical Review B 109, 205148 (2024)](https://doi.org/10.1103/PhysRevB.109.205148) give the zero-magnetization action $S=S_{\mathrm{LL}}+S_g+S_\alpha$:
 
@@ -173,53 +305,15 @@ F^{\mathrm{comm}}_{ij}
 \end{aligned}
 $$
 
-The Langevin equation is $d\phi_{ij}/dt=F^{\mathrm{comm}}_{ij}+\eta_{ij}$, with the same noise normalization as above. Thus the new forces are the **negative sum-field sine** and the **local negative $\sin(4\phi)$**. Both are evaluated in each predictor–corrector stage. For unit cutoffs, the variable named `g` in the code is the force coefficient $g_{\mathrm{code}}=2g/\pi^2$, rather than the paper's action coupling $g$; the configuration filename converts it back with `g*Pi*Pi/2`. Both supplied commensurate programs set $g_{\mathrm{code}}=0$, so the local force is present in the implementation but inactive with the defaults. The nonlocal sum-field force remains active.
+The Langevin equation is $d\phi_{ij}/dt=F^{\mathrm{comm}}_{ij}+\eta_{ij}$, with the same noise normalization as above. Both additional forces are evaluated in each predictor–corrector stage. The command-line parameter `g` is the **paper's action coupling** in unit-cutoff lattice units; the runner converts it to $g_{\mathrm{code}}=2g/\pi^2$ before calling `Diss_comm()`. The default is $g=0$, leaving the local force inactive while the nonlocal sum-field force remains active.
 
-### Commensurate measurements and continuation
+## Verification and migration from the original programs
 
-The initial commensurate run measures after `t_eq1 = 4*t_eq2 = 1280`, with `t_eq2 = 320`; its default final time is long enough to reach this window. The continuation uses `t_eq = 320`, reads the saved sample count and averaged order parameter, and loads the configuration indexed by that count. The same `id=N`, trailing-slash `folder=.../`, `t_fin_prev`, and manually set `t_init` conventions described above apply. The two commensurate programs' physical defaults match each other.
+`make test` checks the public libraries directly for both models: the Ohmic kernel against its rational formula, generalized kernels against a beta-function recurrence, periodic Laplacians on Fourier modes, roughness on a rectangular lattice, interaction forces against finite-difference action derivatives, and a harmonic equilibrium variance benchmark. Executable-level tests compare split and uninterrupted runs, including checkpoint bytes and accumulated observables, and reject invalid inputs, changed restart parameters, wrong models, truncated checkpoints and output overwrites. Additional API tests verify both headers together, multi-translation-unit linkage, zero-field initialization, measurement scheduling, model validation, and exact checkpoint continuation. Tests of a small lattice do not establish equilibration, time-step convergence or finite-size scaling for production parameters.
 
-`OrderParameter()` now accumulates $\cos(2\phi^\star)$ rather than $\cos(\phi^\star)$, where $\phi^\star=\phi-\overline\phi$ is the mean-subtracted field. The paper's AFM order parameter is $\langle\cos(2\phi)\rangle$. **Mean subtraction is consequential in this case:** the commensurate action is not invariant under an arbitrary uniform field shift. The centered observable should therefore be distinguished from the paper's unshifted observable, and the initial program's centered saved field does not preserve the original field phase for an exact restart. As in the incommensurate pair, continuation measures on the centered field but saves the uncentered field.
+GitHub Actions is configured to run the suite with GCC and Clang on pushes and pull requests. It installs Eigen only in the disposable CI runner. Production runs should additionally check time-step convergence, equilibration and autocorrelation for their chosen parameters.
 
-The initial program accumulates roughness; the continued program has the same disabled roughness loading and updates as the incommensurate continuation, so its written roughness values are uninitialized and must not be used. Kernel-file output is commented out in the initial commensurate program.
-
-Configuration filenames include the physical $g$ tag and end in `_langevin.dat`; the time, order-parameter, roughness, and sample-count filenames retain `_langevin_image.dat` and **omit $g$**. These auxiliary filenames also do not identify the commensurate model. Use separate directories for different models and $g$ values, as well as for different trajectories, to avoid mixing or overwriting their data.
-
-### Running independent simulations in parallel
-
-None of the four sources contains MPI, OpenMP, shared-memory work sharing, or a reduction across processes. Parallelism is at the level of **independent trajectories**: launch separate serial processes with distinct `id` values, and combine their statistics afterward. Each process creates its own random generator from `std::random_device`; `id` controls filenames, not the random seed. There is no seed argument or built-in ensemble aggregation.
-
-Use a separate working directory for every trajectory, even with distinct IDs: the initial program's kernel filename has no ID, so concurrent runs in one directory would overwrite it. Outputs are always written in the current working directory. For continuation, use a new output directory and retain the original files in a separate input directory; the `folder` argument changes only the input location. Reuse the same ID for each trajectory's continuation. Do not launch the binaries with `mpirun -n N` and identical arguments: no MPI rank is read, so the processes would share filenames and overwrite outputs.
-
-For example, after compiling the programs as `build/initial` and `build/continue`, launch two initial trajectories from the repository root:
-
-```bash
-mkdir -p runs/trajectory-0 runs/trajectory-1
-(cd runs/trajectory-0 && ../../build/initial id=0) &
-(cd runs/trajectory-1 && ../../build/initial id=1) &
-wait
-```
-
-After adjusting and recompiling the continuation parameters to match a saved run, continue trajectory 0 in a new directory (replace the input path below with the absolute path to its saved files):
-
-```bash
-mkdir -p runs/trajectory-0-continuation
-(cd runs/trajectory-0-continuation && ../../build/continue id=0 folder=/absolute/path/to/runs/trajectory-0/)
-```
-
-## Dependencies and validation
-
-All four programs require Eigen headers and a C++ compiler providing the C++17 beta special function. They also use variable-length stack arrays, a compiler extension rather than standard C++. MPI is not a dependency of these four sources. With an existing Eigen installation, example GNU C++ build commands are:
-
-```bash
-mkdir -p build
-g++ -O2 -std=gnu++17 -I/path/to/eigen3 Langevin_simulation_initial_simulation.cpp -o build/initial
-g++ -O2 -std=gnu++17 -I/path/to/eigen3 Langevin_simulation_continuted_simulation.cpp -o build/continue
-g++ -O2 -std=gnu++17 -I/path/to/eigen3 Langevin_simulation_initial_commensurate.cpp -o build/initial-commensurate
-g++ -O2 -std=gnu++17 -I/path/to/eigen3 Langevin_simulation_continued_commensurate.cpp -o build/continue-commensurate
-```
-
-Replace `/path/to/eigen3` with the directory containing `Eigen/`. No dependencies have been installed, and these four programs have not been compiled or numerically validated here. The descriptions above are based on source inspection; the kernel plot illustrates a formula, not a simulation benchmark. The commensurate pair includes the local pinning force, with zero bare coupling in the supplied defaults.
+The command-line and restart format replace the original hard-coded durations and filename-based restart scheme. Old matrices and auxiliary files are **not** accepted as complete checkpoints: they lack the random state and, in some cases, contain centered fields or invalid roughness data. Keep those data separately. The local force is still $-2g\sin(4\phi)/\pi^2$, but the CLI `g` now names the physical action coupling, rather than the old already-rescaled variable. Commensurate measurements no longer subtract the field mean. These corrections can change measured commensurate order parameters relative to the original programs.
 
 ## Related publications
 
