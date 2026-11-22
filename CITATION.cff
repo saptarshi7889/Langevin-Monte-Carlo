@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "Please cite the relevant published papers listed in README.md when using this code."
+title: "Langevin Monte Carlo for a dissipative XXZ spin chain"
+type: software
+authors:
+  - family-names: Majumdar
+    given-names: Saptarshi
+license: MIT
+repository-code: "https://github.com/saptarshi7889/Langevin-Monte-Carlo"
+abstract: "Langevin sampling of bosonized incommensurate and commensurate dissipative XXZ spin chains."
