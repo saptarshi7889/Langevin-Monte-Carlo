@@ -2,6 +2,24 @@
 
 Research code associated with Saptarshi Majumdar's doctoral work on quantum spin chains coupled to local dissipative baths.
 
+![Stylized three-dimensional schematic of an XXZ chain: six blue spins joined by exchange bonds, each coupled to a separate coral bath of harmonic oscillators at zero temperature.](assets/dissipative-xxz-schematic.png)
+
+Each spin couples to its own independent oscillator bath at zero temperature; $\alpha$ measures the spin–bath coupling strength. The colored bonds distinguish two nearest-neighbor exchange terms:
+
+- **Teal — transverse exchange:**
+
+  $$
+  J_{xy}\left(S_i^x S_{i+1}^x + S_i^y S_{i+1}^y\right).
+  $$
+
+- **Purple — longitudinal exchange:**
+
+  $$
+  J_z S_i^z S_{i+1}^z.
+  $$
+
+Their different heights distinguish the two terms acting on the same neighboring sites, rather than separate spatial paths. Spin directions and oscillator arrangements are illustrative and do not specify a phase. AI-generated illustration inspired by Figure 1 of [Majumdar et al., Physical Review B 107, 165113 (2023)](https://doi.org/10.1103/PhysRevB.107.165113).
+
 ## Research context
 
 We investigate the zero-temperature phase diagram of a one-dimensional XXZ spin chain in which each spin couples to an independent bath of harmonic oscillators: a many-body extension of the spin-boson model. Bosonization and a path-integral formulation map the quantum problem onto a classical field theory in one spatial dimension and imaginary time. Integrating out the baths produces a cosine interaction that is local in space and long-ranged along imaginary time.
@@ -20,7 +38,7 @@ The source includes periodic discrete Laplacians in both lattice directions, a b
 
 This is an archival implementation, rather than a complete reproduction package for all three papers:
 
-- Parameters are set directly in `main`; the current lattice has `L = beta = 20`.
+- Parameters are set directly in `main`; the current lattice has $L = \beta = 20$ (`L = beta = 20` in the code).
 - `Kernel` implements a fixed Ohmic kernel. The variable `s` appears in output filenames but does not change the dynamics.
 - The active dissipative force uses the sine interaction, although output filenames contain `harmonic`.
 - MPI initializes multiple processes, but there is no rank-specific output naming or collective averaging. Multiple ranks would write to the same files; use a single process with this version.
