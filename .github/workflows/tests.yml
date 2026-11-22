@@ -24,3 +24,11 @@ jobs:
         env:
           CXXFLAGS: ${{ matrix.flags }}
         run: make -j2 test CXX=${{ matrix.compiler }}
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python build dependencies in the disposable CI runner
+        run: sudo apt-get update && sudo apt-get install -y libeigen3-dev python3-dev python3-setuptools python3-numpy
+      - name: Build and test the native Python interface
+        run: make -j2 test-python PYTHON=/usr/bin/python3
